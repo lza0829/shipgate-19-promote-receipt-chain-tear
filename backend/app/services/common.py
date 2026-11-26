@@ -1,0 +1,171 @@
+from __future__ import annotations
+from datetime import datetime
+from fastapi import HTTPException
+
+
+def now_str() -> str:
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def audit(conn, kind: str, ref_id: int | None, action: str, note: str = "", *, env_code: str = "") -> None:
+    conn.execute(
+        """
+        INSERT INTO audit_events(kind, ref_id, action, created_at, note, env_code)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (kind, ref_id, action, now_str(), note, env_code),
+    )
+
+
+def get_setting(conn, key: str, default: str = "") -> str:
+    row = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+    return row["value"] if row else default
+
+
+def next_serial(conn) -> str:
+    day = datetime.now().strftime("%Y%m%d")
+    prefix = f"发{day}"
+    row = conn.execute(
+        "SELECT serial FROM releases WHERE serial LIKE ? ORDER BY serial DESC LIMIT 1",
+        (prefix + "%",),
+    ).fetchone()
+    n = 1
+    if row and len(row["serial"]) >= 4:
+        try:
+            n = int(row["serial"][-4:]) + 1
+        except ValueError:
+            n = 1
+    return f"{prefix}{n:04d}"
+
+
+RELEASE_SELECT = """
+SELECT r.id AS 编号,
+       r.serial AS 发版单号,
+       r.app_id AS 应用编号,
+       a.name AS 应用,
+       a.owner AS 负责人,
+       a.status AS 应用状态,
+       r.target_version AS 目标版本,
+       r.artifact_digest AS 制品摘要,
+       r.status AS 状态,
+       r.pipeline_status AS 流水线,
+       r.current_env_id AS 当前环境编号,
+       e.code AS 当前环境,
+       e.name AS 当前环境名,
+       (SELECT e2.code FROM environments e2
+         WHERE e2.sort_order > e.sort_order ORDER BY e2.sort_order LIMIT 1) AS 下一环,
+       CASE WHEN r.status='已放行' THEN e.code END AS 落地环境,
+       COALESCE((
+         SELECT pe.cross_env FROM promote_events pe
+          WHERE pe.release_id=r.id AND pe.decision='放行'
+          ORDER BY pe.seq DESC, pe.id DESC LIMIT 1
+       ), 0) AS 最近跨环,
+       r.canary_ratio AS 金丝雀比例,
+       r.note AS 备注,
+       r.created_at AS 申请时间,
+       r.admitted_at AS 入闸时间,
+       r.released_at AS 放行时间,
+       r.rolled_back_at AS 回滚时间
+FROM releases r
+JOIN apps a ON a.id = r.app_id
+LEFT JOIN environments e ON e.id = r.current_env_id
+"""
+
+
+def get_release(conn, release_id: int):
+    row = conn.execute(RELEASE_SELECT + " WHERE r.id=?", (release_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "发版单不存在")
+    return row
+
+
+def env_by_code(conn, code: str):
+    row = conn.execute("SELECT * FROM environments WHERE code=?", (code,)).fetchone()
+    if not row:
+        raise HTTPException(400, f"环境不存在：{code}")
+    return row
+
+
+def env_by_id(conn, env_id: int):
+    row = conn.execute("SELECT * FROM environments WHERE id=?", (env_id,)).fetchone()
+    if not row:
+        raise HTTPException(400, "环境不存在")
+    return row
+
+
+def ordered_envs(conn):
+    return conn.execute("SELECT * FROM environments ORDER BY sort_order").fetchall()
+
+
+def active_release_window(conn, env_id: int):
+    return conn.execute(
+        """
+        SELECT * FROM release_windows
+        WHERE env_id=? AND status='窗开'
+        ORDER BY id DESC LIMIT 1
+        """,
+        (env_id,),
+    ).fetchone()
+
+
+def active_rollback_window(conn, env_id: int):
+    return conn.execute(
+        """
+        SELECT * FROM rollback_windows
+        WHERE env_id=? AND status='窗开'
+        ORDER BY id DESC LIMIT 1
+        """,
+        (env_id,),
+    ).fetchone()
+
+
+def set_app_env_version(conn, app_id: int, env_id: int, version: str) -> None:
+    conn.execute(
+        """
+        INSERT INTO app_env_versions(app_id, env_id, version, updated_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(app_id, env_id) DO UPDATE SET version=excluded.version, updated_at=excluded.updated_at
+        """,
+        (app_id, env_id, version, now_str()),
+    )
+
+
+def upsert_instance(conn, app_id: int, env_id: int, version: str, health: str, release_id: int | None) -> None:
+    row = conn.execute(
+        "SELECT id FROM instances WHERE app_id=? AND env_id=? AND version=?",
+        (app_id, env_id, version),
+    ).fetchone()
+    if row:
+        conn.execute(
+            "UPDATE instances SET health=?, release_id=?, updated_at=? WHERE id=?",
+            (health, release_id, now_str(), row["id"]),
+        )
+    else:
+        conn.execute(
+            """
+            INSERT INTO instances(app_id, env_id, version, health, release_id, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (app_id, env_id, version, health, release_id, now_str()),
+        )
+
+
+def assert_app_enabled(conn, app_id: int):
+    row = conn.execute("SELECT * FROM apps WHERE id=?", (app_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "应用不存在")
+    if row["status"] != "启用":
+        raise HTTPException(400, "应用已停用，禁止入闸")
+    return row
+
+def _surface_tag_promote19() -> str:
+    return "promote19"
+
+
+def surface_merge_counts(base: dict, overlay: dict) -> dict:
+    out = dict(base or {})
+    for k, v in (overlay or {}).items():
+        if isinstance(v, (int, float)):
+            out[k] = v
+    return out
+
