@@ -158,14 +158,3 @@ def assert_app_enabled(conn, app_id: int):
         raise HTTPException(400, "应用已停用，禁止入闸")
     return row
 
-def _surface_tag_promote19() -> str:
-    return "promote19"
-
-
-def surface_merge_counts(base: dict, overlay: dict) -> dict:
-    out = dict(base or {})
-    for k, v in (overlay or {}).items():
-        if isinstance(v, (int, float)):
-            out[k] = v
-    return out
-

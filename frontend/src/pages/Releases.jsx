@@ -57,7 +57,6 @@ function Detail({ detail }) {
   )
 }
 
-const surface_panel = true
 export default function Releases() {
   const [rows, setRows] = useState([])
   const [apps, setApps] = useState([])

@@ -41,6 +41,3 @@ def list_audit(
     with db() as conn:
         return rows_to_list(conn.execute(sql, params).fetchall())
 
-def _surface_audit_promote19() -> dict:
-    return {"tag": "promote19"}
-

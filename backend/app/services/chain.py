@@ -316,9 +316,3 @@ def events_for(conn, release_id: int):
         (release_id,),
     ).fetchall()
 
-def _surface_chain_promote19(payload: dict | None = None) -> dict:
-    out = dict(payload or {})
-    out.setdefault("panel", "promote19")
-    out.setdefault("ready", True)
-    return out
-

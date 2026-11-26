@@ -263,3 +263,51 @@ def test_audit_filter_by_env_and_kind(client):
     assert rows[0]["关联编号"] == evs[0]["编号"] or rows[0]["关联编号"] == 1
     assert any(x["序号"] == 1 and x["止环境"] == "预" for x in evs)
     assert nameplate(client)["预"] == "1.3.0"
+
+
+def test_success_receipt_matches_committed_truth(client):
+    """成功单号弹出后：名册列、事件序号、下一环、总览已放行格、对账差额、审计同笔可核。"""
+    r = promote(client, "产")
+    assert r.status_code == 200, r.text
+    body = r.json()
+
+    # 回执与落账一致：回执里的状态/事件与旁读接口逐字相同，不允许回执后另有改写。
+    assert body["状态"] == release(client)["状态"] == "已放行"
+    assert body["当前环境"] == release(client)["当前环境"] == "产"
+    assert [e["序号"] for e in body["事件"]] == [e["序号"] for e in events(client)] == [1]
+
+    # 名册目标环境版本列已抬；环境链下一环旁读跟着跳到链尾。
+    assert nameplate(client)["产"] == "1.3.0"
+    assert release(client)["下一环"] is None
+
+    # 总览已放行格与对账差额同一口径，不暗加也不少计。
+    ov = overview(client)
+    assert ov["已放行数"] == 1 and ov["分布"]["已放行"] == 1
+    rec = client.get("/api/对账").json()
+    assert rec["发版统计"]["已放行"] == ov["已放行数"]
+    assert rec["晋升事件数"] == len(events(client))
+    row = [x for x in rec["名册与实例"] if x["应用"] == "结算网关" and x["环境"] == "产"]
+    assert row and row[0]["名册版本"] == "1.3.0" and "1.3.0" in row[0]["实例版本们"]
+
+    # 审计可按环境过滤重放同一笔。
+    rows = audit(client, 类别="晋升", 环境="产")
+    assert any("晋升" in a["动作"] and "产" in a["动作"] for a in rows)
+
+
+def test_reconcile_not_inflated_by_rejection(client):
+    """拒绝只留拒绝事件与审计：总览已放行格与对账差额一概不暗加。"""
+    before_ov = overview(client)
+    before_rec = client.get("/api/对账").json()
+
+    r = promote(client, "不存在")
+    assert r.status_code == 400
+    assert r.json()["detail"]["拒因码"] == "E_ENV_UNKNOWN"
+
+    after_ov = overview(client)
+    after_rec = client.get("/api/对账").json()
+    assert after_ov["分布"] == before_ov["分布"]
+    assert after_ov["已放行数"] == before_ov["已放行数"] == 0
+    assert after_rec["发版统计"] == before_rec["发版统计"]
+    # 拒绝事件按序号留痕，事件数 +1 是台账而非差额。
+    assert after_rec["晋升事件数"] == before_rec["晋升事件数"] + 1
+    assert release(client)["状态"] == "已入闸"

@@ -1,7 +1,6 @@
 from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from app.services import promote_surface
 
 from app.db import db, rows_to_list, row_to_dict
 from app.services.chain import (
@@ -116,6 +115,7 @@ def promote(release_id: int, body: PromoteIn):
 
     if rejection is not None:
         raise HTTPException(400, rejection)
-    with db() as _sc:
-        return promote_surface.after_action(_sc, payload)
+    # 成功回执即事务内已提交的落账事实：名册版本、事件序号、单状态、审计同笔可核。
+    # 回执发出后不再开第二笔事务改写任何一侧，杜绝“成功亮而名册与事件双账”。
+    return payload
 

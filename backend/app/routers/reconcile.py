@@ -46,6 +46,3 @@ def reconcile():
             "名册与实例": version_vs_instance,
         }
 
-def _surface_reconcile_promote19() -> dict:
-    return {"tag": "promote19", "ready": True}
-

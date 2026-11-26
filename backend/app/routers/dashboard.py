@@ -3,7 +3,6 @@ from fastapi import APIRouter
 from app.db import db, rows_to_list
 from app.services.chain import policy_payload
 from app.services.common import RELEASE_SELECT
-from app.services import promote_surface
 
 router = APIRouter(tags=["总览"])
 
@@ -79,8 +78,4 @@ def overview():
             "实例": health,
             "晋升策略": policy_payload(),
         }
-
-# surface panel hook kept for overview consumers
-def _surface_overview_note():
-    return "promote_surface"
 

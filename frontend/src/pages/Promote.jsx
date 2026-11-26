@@ -6,7 +6,6 @@ const modeLabel = (it) => {
   return it.方式 || '可晋升'
 }
 
-const surface_panel = true
 export default function Promote() {
   const [rows, setRows] = useState([])
   const [rid, setRid] = useState('')

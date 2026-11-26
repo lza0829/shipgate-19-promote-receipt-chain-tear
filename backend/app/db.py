@@ -148,6 +148,9 @@ PROMOTE_EVENT_COLUMNS = {
 
 def _migrate(conn: sqlite3.Connection) -> None:
     """旧库升级：补晋升事件附加列/放开 to_env_id，并给审计补 env_code。"""
+    # 清掉“假晋升成功灯”时代残留在设置表里的涂刷计数，避免旧库继续被旁读成已放行。
+    conn.execute("DELETE FROM settings WHERE key IN ('surface_last', 'surface_ok')")
+
     audit_cols = {r["name"] for r in conn.execute("PRAGMA table_info(audit_events)").fetchall()}
     if audit_cols and "env_code" not in audit_cols:
         conn.execute("ALTER TABLE audit_events ADD COLUMN env_code TEXT NOT NULL DEFAULT ''")
